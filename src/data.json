@@ -1,0 +1,7 @@
+[
+  { "username": "joao_silva", "status": "ativo" },
+  { "username": "maria_oliveira", "status": "inativo" },
+  { "username": "pedro_almeida", "status": "suspenso" },
+  { "username": "ana_costa", "status": "ativo" },
+  { "username": "lucas_santos", "status": "pendente" }
+]
