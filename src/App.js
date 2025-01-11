@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import "bootstrap/dist/css/bootstrap.min.css";
 
 // Configurações do GitHub
-const GITHUB_TOKEN =; // Substitua pelo token correto
+const GITHUB_TOKEN = process.env.REACT_APP_API_KEY; // Substitua pelo token correto
 const REPO_OWNER = "markfinn0";
 const REPO_NAME = "dados_teste";
 const FILE_PATH = "data.json";
