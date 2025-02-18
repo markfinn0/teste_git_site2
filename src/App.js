@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "bootstrap/dist/css/bootstrap.min.css";
+import axios from 'axios';
 
 // Configurações do GitHub
 const GITHUB_TOKEN = process.env.REACT_APP_API_KEY; // Substitua pelo token correto
@@ -26,29 +27,66 @@ const App = () => {
   const fetchUsers = async () => {
     setLoading(true);
     setMessage("");
-
+  
     try {
-      const timestamp = new Date().getTime();
-      const response = await fetch(`${CONTENTS_URL}?ref=${BRANCH_BASE}&t=${timestamp}`, {
-        headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error("Erro ao carregar os usuários");
-      }
-
-      const data = await response.json();
-      const content = JSON.parse(atob(data.content)); // Decodificando o conteúdo
-      setUsers(content.users || []); // Atualiza a lista de usuários
+        const timestamp = new Date().getTime();
+        
+        // Primeira requisição: tenta obter o conteúdo diretamente
+        const response = await fetch(`${CONTENTS_URL}?ref=${BRANCH_BASE}&t=${timestamp}`, {
+            headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+            cache: "no-store",
+        });
+    
+        if (!response.ok) {
+            throw new Error("Erro ao carregar os usuários");
+        }
+    
+        const data = await response.json();
+        console.log("Resposta da API (1ª requisição):", data);
+    
+        let content;
+        
+        // Se houver conteúdo diretamente disponível, usa ele
+        if (data.content) {
+            const decodedContent = atob(data.content);
+            content = JSON.parse(decodedContent);
+            console.log(content)
+        } else if (data.git_url) {
+            // Se não houver conteúdo direto, tenta buscar via git_url
+            const gitResponse = await fetch(data.git_url, {
+                headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+                cache: "no-store",
+            });
+    
+            if (!gitResponse.ok) {
+                throw new Error("Erro ao carregar o conteúdo do arquivo.");
+            }
+    
+            const gitData = await gitResponse.json();
+            console.log("Resposta da API (2ª requisição):", gitData);
+    
+            if (!gitData.content) {
+                throw new Error("O conteúdo não está presente na resposta.");
+            }
+    
+            const decodedGitContent = atob(gitData.content);
+            content = JSON.parse(decodedGitContent);
+        } else {
+            throw new Error("Nenhum conteúdo disponível na resposta.");
+        }
+    
+        if (content.users) {
+            setUsers(content.users || []);
+        } else {
+            throw new Error("O conteúdo não contém a lista de usuários.");
+        }
     } catch (error) {
-      console.error(error);
-      setMessage("Erro ao carregar os usuários.");
+        console.error(error);
+        setMessage(error.message || "Erro ao carregar os usuários.");
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  };
-
+};
   // Função para inserir um novo usuário
   const insertUser = async () => {
     setLoading(true);
@@ -203,19 +241,74 @@ const App = () => {
 
   // Função para obter o conteúdo do arquivo
   const getFileContent = async (branchName) => {
-    const timestamp = new Date().getTime();
-    const response = await fetch(`${CONTENTS_URL}?ref=${branchName}&t=${timestamp}`, {
-      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      throw new Error("Erro ao carregar o arquivo.");
+    setLoading(true); // Ativa o estado de carregamento
+    setMessage(""); // Limpa mensagens anteriores
+  
+    try {
+      const timestamp = new Date().getTime();
+  
+      // Primeira requisição: obtém o git_url
+      const response = await fetch(`${CONTENTS_URL}?ref=${branchName}&t=${timestamp}`, {
+        headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+        cache: "no-store",
+      });
+  
+      console.log("Resposta da API (1ª requisição):", response); // Log da resposta
+  
+      // Verifica se a requisição foi bem-sucedida
+      if (!response.ok) {
+        const errorData = await response.json(); // Tenta obter detalhes do erro
+        throw new Error(errorData.message || "Erro ao carregar o arquivo.");
+      }
+  
+      const data = await response.json();
+      console.log("Dados recebidos (1ª requisição):", data); // Log dos dados recebidos
+  
+      // Verifica se o git_url está presente
+      if (!data.git_url) {
+        throw new Error("O git_url não está presente na resposta.");
+      }
+  
+      // Segunda requisição: busca o conteúdo usando o git_url
+      const gitResponse = await fetch(data.git_url, {
+        headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+        cache: "no-store",
+      });
+  
+      console.log("Resposta da API (2ª requisição):", gitResponse); // Log da resposta
+  
+      // Verifica se a requisição foi bem-sucedida
+      if (!gitResponse.ok) {
+        const errorData = await gitResponse.json(); // Tenta obter detalhes do erro
+        throw new Error(errorData.message || "Erro ao carregar o conteúdo do arquivo.");
+      }
+  
+      const gitData = await gitResponse.json();
+      console.log("Dados recebidos (2ª requisição):", gitData); // Log dos dados recebidos
+  
+      // Verifica se o conteúdo está presente
+      if (!gitData.content) {
+        throw new Error("O conteúdo não está presente na resposta.");
+      }
+  
+      // Decodifica o conteúdo (se necessário)
+      const decodedContent = atob(gitData.content); // Decodifica o conteúdo
+      const content = JSON.parse(decodedContent); // Converte para JSON
+  
+      // Verifica se o conteúdo tem a estrutura esperada
+      if (!content) {
+        throw new Error("O conteúdo decodificado não é um JSON válido.");
+      }
+  
+      // Retorna o conteúdo e o SHA do arquivo
+      return { content, sha: data.sha };
+    } catch (error) {
+      console.error("Erro ao carregar o conteúdo do arquivo:", error);
+      setMessage(error.message || "Erro ao carregar o conteúdo do arquivo.");
+      throw error; // Propaga o erro para ser tratado externamente
+    } finally {
+      setLoading(false); // Desativa o estado de carregamento
     }
-
-    const data = await response.json();
-    const content = JSON.parse(atob(data.content)); 
-    return { content, sha: data.sha };
   };
 
   // Função para atualizar o arquivo
