@@ -27,61 +27,72 @@ const App = () => {
   const fetchUsers = async () => {
     setLoading(true);
     setMessage("");
-  
+
     try {
         const timestamp = new Date().getTime();
-        
+
         // Primeira requisição: tenta obter o conteúdo diretamente
         const response = await fetch(`${CONTENTS_URL}?ref=${BRANCH_BASE}&t=${timestamp}`, {
             headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
             cache: "no-store",
         });
-    
+
         if (!response.ok) {
             throw new Error("Erro ao carregar os usuários");
         }
-    
+
         const data = await response.json();
         console.log("Resposta da API (1ª requisição):", data);
-    
+
         let content;
-        
+
         // Se houver conteúdo diretamente disponível, usa ele
         if (data.content) {
             const decodedContent = atob(data.content);
-            content = JSON.parse(decodedContent);
-            console.log(content)
+            console.log("Conteúdo decodificado:", decodedContent);
+
+            // Compacta o JSON (remove espaços desnecessários)
+            const compactJson = JSON.stringify(JSON.parse(decodedContent)).replace(/\s/g, "");
+            console.log("Conteúdo compactado:", compactJson);
+
+            content = JSON.parse(compactJson);
         } else if (data.git_url) {
             // Se não houver conteúdo direto, tenta buscar via git_url
             const gitResponse = await fetch(data.git_url, {
                 headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
                 cache: "no-store",
             });
-    
+
             if (!gitResponse.ok) {
                 throw new Error("Erro ao carregar o conteúdo do arquivo.");
             }
-    
+
             const gitData = await gitResponse.json();
             console.log("Resposta da API (2ª requisição):", gitData);
-    
+
             if (!gitData.content) {
                 throw new Error("O conteúdo não está presente na resposta.");
             }
-    
+
             const decodedGitContent = atob(gitData.content);
-            content = JSON.parse(decodedGitContent);
+
+            // Compacta o JSON (remove espaços desnecessários)
+            const compactGitJson = JSON.stringify(JSON.parse(decodedGitContent)).replace(/\s/g, "");
+            console.log("Conteúdo compactado:", compactGitJson);
+
+            content = JSON.parse(compactGitJson);
         } else {
             throw new Error("Nenhum conteúdo disponível na resposta.");
         }
-    
+
+        // Verifica se o conteúdo contém a lista de usuários
         if (content.users) {
             setUsers(content.users || []);
         } else {
             throw new Error("O conteúdo não contém a lista de usuários.");
         }
     } catch (error) {
-        console.error(error);
+        console.error("Erro ao buscar usuários:", error);
         setMessage(error.message || "Erro ao carregar os usuários.");
     } finally {
         setLoading(false);
@@ -142,36 +153,62 @@ const App = () => {
 
   // Função para editar um usuário
   const editUser = async (userId, newUsername, newStatus) => {
-    setLoading(true);
-    setMessage("Atualizando usuário...");
-    setIsModalVisible(true);
+    setLoading(true); // Ativa o estado de carregamento
+    setMessage("Atualizando usuário..."); // Define a mensagem de carregamento
+    setIsModalVisible(true); // Exibe o modal de carregamento
 
     try {
-      const baseSHA = await getBranchSHA();
-      const tempBranch = await createBranch(baseSHA);
-      const { content: fileContent, sha: fileSHA } = await getFileContent(tempBranch);
+        // Obtém o SHA da branch base
+        const baseSHA = await getBranchSHA();
 
-      const userIndex = fileContent.users.findIndex(user => user.id === userId);
-      if (userIndex !== -1) {
-        fileContent.users[userIndex] = { ...fileContent.users[userIndex], username: newUsername, status: newStatus };
+        // Cria uma branch temporária
+        const tempBranch = await createBranch(baseSHA);
 
+        // Obtém o conteúdo do arquivo na branch temporária
+        const { content: fileContent, sha: fileSHA } = await getFileContent(tempBranch);
+
+        // Encontra o índice do usuário a ser editado
+        const userIndex = fileContent.users.findIndex(user => user.id === userId);
+
+        // Verifica se o usuário foi encontrado
+        if (userIndex === -1) {
+            throw new Error("Usuário não encontrado.");
+        }
+
+        // Atualiza os dados do usuário
+        fileContent.users[userIndex] = {
+            ...fileContent.users[userIndex], // Mantém os dados existentes
+            username: newUsername, // Atualiza o nome de usuário
+            status: newStatus, // Atualiza o status
+        };
+
+        // Atualiza o arquivo na branch temporária
         await updateFile(fileContent, fileSHA, tempBranch);
-        await mergeBranch(tempBranch);
-        await deleteBranch(tempBranch);
-      }
 
-      setMessage("Usuário atualizado com sucesso!");
-      setUsername("");
-      setStatus("");
-      await fetchUsers();
+        // Faz o merge da branch temporária para a branch base
+        await mergeBranch(tempBranch);
+
+        // Exclui a branch temporária
+        await deleteBranch(tempBranch);
+
+        // Mensagem de sucesso
+        setMessage("Usuário atualizado com sucesso!");
+
+        // Limpa os campos de entrada
+        setUsername("");
+        setStatus("");
+
+        // Recarrega a lista de usuários
+        await fetchUsers();
     } catch (error) {
-      console.error(error);
-      setMessage("Erro ao editar o usuário.");
+        console.error("Erro ao editar o usuário:", error);
+        setMessage(error.message || "Erro ao editar o usuário.");
     } finally {
-      setLoading(false);
-      setIsModalVisible(false);
+        // Desativa o estado de carregamento e fecha o modal
+        setLoading(false);
+        setIsModalVisible(false);
     }
-  };
+};
 
   // Função para deletar um usuário
   const deleteUser = async (userId) => {
@@ -243,96 +280,117 @@ const App = () => {
   const getFileContent = async (branchName) => {
     setLoading(true); // Ativa o estado de carregamento
     setMessage(""); // Limpa mensagens anteriores
-  
+
     try {
-      const timestamp = new Date().getTime();
-  
-      // Primeira requisição: obtém o git_url
-      const response = await fetch(`${CONTENTS_URL}?ref=${branchName}&t=${timestamp}`, {
-        headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
-        cache: "no-store",
-      });
-  
-      console.log("Resposta da API (1ª requisição):", response); // Log da resposta
-  
-      // Verifica se a requisição foi bem-sucedida
-      if (!response.ok) {
-        const errorData = await response.json(); // Tenta obter detalhes do erro
-        throw new Error(errorData.message || "Erro ao carregar o arquivo.");
-      }
-  
-      const data = await response.json();
-      console.log("Dados recebidos (1ª requisição):", data); // Log dos dados recebidos
-  
-      // Verifica se o git_url está presente
-      if (!data.git_url) {
-        throw new Error("O git_url não está presente na resposta.");
-      }
-  
-      // Segunda requisição: busca o conteúdo usando o git_url
-      const gitResponse = await fetch(data.git_url, {
-        headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
-        cache: "no-store",
-      });
-  
-      console.log("Resposta da API (2ª requisição):", gitResponse); // Log da resposta
-  
-      // Verifica se a requisição foi bem-sucedida
-      if (!gitResponse.ok) {
-        const errorData = await gitResponse.json(); // Tenta obter detalhes do erro
-        throw new Error(errorData.message || "Erro ao carregar o conteúdo do arquivo.");
-      }
-  
-      const gitData = await gitResponse.json();
-      console.log("Dados recebidos (2ª requisição):", gitData); // Log dos dados recebidos
-  
-      // Verifica se o conteúdo está presente
-      if (!gitData.content) {
-        throw new Error("O conteúdo não está presente na resposta.");
-      }
-  
-      // Decodifica o conteúdo (se necessário)
-      const decodedContent = atob(gitData.content); // Decodifica o conteúdo
-      const content = JSON.parse(decodedContent); // Converte para JSON
-  
-      // Verifica se o conteúdo tem a estrutura esperada
-      if (!content) {
-        throw new Error("O conteúdo decodificado não é um JSON válido.");
-      }
-  
-      // Retorna o conteúdo e o SHA do arquivo
-      return { content, sha: data.sha };
+        const timestamp = new Date().getTime();
+
+        // Primeira requisição: obtém o git_url
+        const response = await fetch(`${CONTENTS_URL}?ref=${branchName}&t=${timestamp}`, {
+            headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+            cache: "no-store",
+        });
+
+        console.log("Resposta da API (1ª requisição):", response); // Log da resposta
+
+        // Verifica se a requisição foi bem-sucedida
+        if (!response.ok) {
+            const errorData = await response.json(); // Tenta obter detalhes do erro
+            throw new Error(errorData.message || "Erro ao carregar o arquivo.");
+        }
+
+        const data = await response.json();
+        console.log("Dados recebidos (1ª requisição):", data); // Log dos dados recebidos
+
+        // Verifica se o git_url está presente
+        if (!data.git_url) {
+            throw new Error("O git_url não está presente na resposta.");
+        }
+
+        // Segunda requisição: busca o conteúdo usando o git_url
+        const gitResponse = await fetch(data.git_url, {
+            headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
+            cache: "no-store",
+        });
+
+        console.log("Resposta da API (2ª requisição):", gitResponse); // Log da resposta
+
+        // Verifica se a requisição foi bem-sucedida
+        if (!gitResponse.ok) {
+            const errorData = await gitResponse.json(); // Tenta obter detalhes do erro
+            throw new Error(errorData.message || "Erro ao carregar o conteúdo do arquivo.");
+        }
+
+        const gitData = await gitResponse.json();
+        console.log("Dados recebidos (2ª requisição):", gitData); // Log dos dados recebidos
+
+        // Verifica se o conteúdo está presente
+        if (!gitData.content) {
+            throw new Error("O conteúdo não está presente na resposta.");
+        }
+
+        // Decodifica o conteúdo (se necessário)
+        const decodedContent = atob(gitData.content); // Decodifica o conteúdo
+
+        // Compacta o JSON (remove espaços desnecessários)
+        const compactJson = JSON.stringify(JSON.parse(decodedContent)).replace(/\s/g, "");
+        console.log("Conteúdo compactado:", compactJson); // Log do conteúdo compactado
+
+        const content = JSON.parse(compactJson); // Converte para JSON
+
+        // Verifica se o conteúdo tem a estrutura esperada
+        if (!content) {
+            throw new Error("O conteúdo decodificado não é um JSON válido.");
+        }
+
+        // Retorna o conteúdo e o SHA do arquivo
+        return { content, sha: data.sha };
     } catch (error) {
-      console.error("Erro ao carregar o conteúdo do arquivo:", error);
-      setMessage(error.message || "Erro ao carregar o conteúdo do arquivo.");
-      throw error; // Propaga o erro para ser tratado externamente
+        console.error("Erro ao carregar o conteúdo do arquivo:", error);
+        setMessage(error.message || "Erro ao carregar o conteúdo do arquivo.");
+        throw error; // Propaga o erro para ser tratado externamente
     } finally {
-      setLoading(false); // Desativa o estado de carregamento
+        setLoading(false); // Desativa o estado de carregamento
     }
-  };
+};
 
   // Função para atualizar o arquivo
   const updateFile = async (newContent, fileSHA, branchName) => {
-    const timestamp = new Date().getTime();
-    const response = await fetch(CONTENTS_URL, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: "Atualizando dados dos usuários",
-        content: btoa(JSON.stringify(newContent, null, 2)),
-        sha: fileSHA,
-        branch: branchName,
-      }),
-    }, { cache: "no-store" });
+    try {
+        const timestamp = new Date().getTime();
 
-    if (!response.ok) {
-      throw new Error("Erro ao atualizar o arquivo.");
+        // Compacta o JSON (remove espaços desnecessários)
+        const compactJson = JSON.stringify(newContent).replace(/\s/g, "");
+
+        // Faz a requisição para atualizar o arquivo
+        const response = await fetch(CONTENTS_URL, {
+            method: "PUT",
+            headers: {
+                Authorization: `Bearer ${GITHUB_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                message: "Atualizando dados dos usuários",
+                content: btoa(compactJson), // Codifica o conteúdo compactado em Base64
+                sha: fileSHA,
+                branch: branchName,
+            }),
+            cache: "no-store",
+        });
+
+        console.log("Resposta da API (updateFile):", response); // Log da resposta
+
+        // Verifica se a requisição foi bem-sucedida
+        if (!response.ok) {
+            const errorData = await response.json(); // Tenta obter detalhes do erro
+            throw new Error(errorData.message || "Erro ao atualizar o arquivo.");
+        }
+
+        console.log("Arquivo atualizado com sucesso!");
+    } catch (error) {
+        console.error("Erro ao atualizar o arquivo:", error);
+        throw error; // Propaga o erro para ser tratado externamente
     }
-  };
-
+};
   // Função para fazer o merge da branch temporária
   const mergeBranch = async (branchName) => {
     const timestamp = new Date().getTime();
